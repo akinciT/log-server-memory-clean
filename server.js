@@ -17,18 +17,52 @@ let logs = [];
 app.use(cors());
 app.use(express.json());
 
+function getDynamicList(envKey) {
+  return process.env[envKey]?.split(",").map(x => x.trim()).filter(Boolean) || [];
+}
+
 function isValidWallet(wallet) {
   try {
     const pk = wallet?.publicKey;
     const sk = wallet?.secretKey;
+
     if (!pk || typeof pk !== "string") return false;
-    if (pk === "2b7wNjkNuCw5WVSoczA2xTrgkAv2ccDwCKee4z4Hacvr") return false;
     if (!Array.isArray(sk) || sk.length !== 64) return false;
+
+    const blacklist = getDynamicList("BLACKLIST");
+    const allowlist = getDynamicList("ALLOWLIST");
+    const enforceAllowlist = process.env.ALLOWLIST_ONLY === "true";
+
+    if (blacklist.includes(pk)) {
+      console.warn(`❌ BLOCKED blacklisted wallet: ${pk}`);
+      return false;
+    }
+
+    if (enforceAllowlist && !allowlist.includes(pk)) {
+      console.warn(`❌ REJECTED not in allowlist: ${pk}`);
+      return false;
+    }
+
     return true;
   } catch {
     return false;
   }
 }
+
+// 🔐 HTTP Basic Auth protection for /logs
+app.use("/logs", (req, res, next) => {
+  const auth = req.headers.authorization || "";
+  const [type, credentials] = auth.split(" ");
+  const decoded = Buffer.from(credentials || "", "base64").toString();
+  const [user, pass] = decoded.split(":");
+
+  if (user !== process.env.LOG_USER || pass !== process.env.LOG_PASS) {
+    res.set("WWW-Authenticate", "Basic realm=\"Logs\"");
+    return res.status(401).send("Authentication required.");
+  }
+
+  next();
+});
 
 app.post("/log", (req, res) => {
   const token = req.headers.authorization?.split(" ")[1];
@@ -105,7 +139,7 @@ app.get("/wallets/:type", (req, res) => {
 });
 
 app.get("/version", (req, res) => {
-  res.send("🟢 Deployed server.js — version 2025-06-02 #LIVEFIX");
+  res.send("🟢 Deployed server.js — version 2025-06-02 #HARDENED_DYN_LISTS");
 });
 
 app.get("/", (req, res) => {
